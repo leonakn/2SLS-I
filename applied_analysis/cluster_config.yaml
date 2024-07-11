@@ -1,0 +1,4 @@
+__default__:
+    log: slurm-{rule}-{wildcards}.log
+    time: "{resources.time}"
+    mem: "{resources.mem_mb}"

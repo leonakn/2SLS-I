@@ -1,0 +1,478 @@
+# leona knusel
+# this Snakefile runs through all the steps of the interaction analysis in an MR framework
+# first, it loads the exposure phenotype GWASs, reduces it in size and renames columns if necessary
+# second, it prunes the exposure phenotype GWASs
+# third, it calculates the GRS for each individual and each exposure
+# fourth, it fits the models 1-4.4 for each outcome - exposure combination and the models necesary for correction
+# fifth, it performs correction of the interaction and compares the effect sizes across different models
+# all analyses are also performed using an extended GRS (Privé et al., 2022)
+
+# field IDs of the exposures to consider
+exposure_IDs = ["37"] # add field IDs of the exposure traits you want to consider
+
+# field IDs of the outcomes to consider
+outcome_ID = ["11"] # add field IDs of the outcome traits you want to consider
+
+# field IDs of the enviroment variables to consider
+interaction_IDs = ["1204"] # add field IDs of the enviroment variables you want to consider
+
+# indicate each trait that should be corrected for the according variable:
+correct_for_insulin = ["37"]
+correct_for_bp_medication = []
+correct_for_cholesterol_lowering = []
+correct_for_oral_contraceptive = []
+correct_for_hormone_replacement = []
+
+female_only_IDs = [] #if a variable is only meaningful for women (e.g. age at menarche), indicate here
+
+# variant_df = "data/variants.tsv.bgz" #from neale et al. (2017), see: https://broad-ukb-sumstats-us-east-1.s3.amazonaws.com/round2/annotations/variants.tsv.bgz
+# path_to_neale_files = "path_neale_sumstats" # where you have the sumstats stored. 
+# file_snp_reference = "data/HRC.r1-1.GRCh37.wgs.mac5.sites.tab.gz" # available at ftp://ngs.sanger.ac.uk/production/hrc/HRC.r1-1/HRC.r1-1.GRCh37.wgs.mac5.sites.tab.gz
+path_to_results = "results/"
+path_to_data = "data/"
+
+# file_sample_qc = "ukb_sqc_v2.txt"
+# file_eids = "data/_001_ukb_cal_chr1_v2.fam"
+# file_retracted_samples = "data/w16389_2023-04-25.csv" #participants who are not longer part of UKBB, use most recent version!
+
+# path_to_bgen_files = "data/UKBB/imp/" #path to bgen files with imputed snps, obtained from UKBB
+# bfile = "uk10k.autosomal" #necessary for clumping with PLINK
+# file_wb_participants = path_to_results + "001_samples_white_british_all.txt" # output of this pipeline
+# file_demographics = "/data/UKBB/pheno/ukb21067.csv" #baseline characteristics data
+file_PRS = "data/aggregated_scores.txt.gz" # obtained using weights from here: https://www.pgscatalog.org/publication/PGP000263/ (check out https://doi.org/10.1016/j.ajhg.2021.11.008)
+
+rule all:
+    input:
+        # path_to_results + "001_samples_white_british_all.txt",
+        # expand(path_to_results + "002_Genotypes_{EXPO_IDs}.Rdata", EXPO_IDs = exposure_IDs),
+        # path_to_results + "003_Covariates.Rdata",
+        # expand(path_to_results + "004_Exposure_phenotype_{EXPO_IDs}.Rdata", EXPO_IDs = exposure_IDs),
+        # expand(path_to_results + "005_outcome_phenotype_{OUTC_ID}.Rdata", OUTC_ID = outcome_ID),
+        # expand(path_to_results + "006_interaction_phenotype_{INT_IDs}.Rdata", INT_IDs = interaction_IDs),
+        #note: if you want to run the simulations, you'll have to outcomment everything above this line 
+        # (as running this would require access to UKBB data)
+        expand(path_to_results + "007_E_{INT_IDs}_X_{EXPO_IDs}_model.Rdata", INT_IDs = interaction_IDs, EXPO_IDs = exposure_IDs),
+        # expand(path_to_results + "009_SNP_x_{INT_IDs}_interactions_on_{EXPO_IDs}.Rdata", INT_IDs = interaction_IDs, EXPO_IDs = exposure_IDs),
+        # expand(path_to_results + "010_individual_GRS_{EXPO_IDs}.Rdata", EXPO_IDs = exposure_IDs),
+        expand(path_to_results + "011_Model_GRSxE_{INT_IDs}_on_X_{EXPO_IDs}.Rdata", INT_IDs = interaction_IDs, EXPO_IDs = exposure_IDs),
+        expand(path_to_results + "012_MR_I_Expo_{EXPO_IDs}_Outc_{OUTC_ID}.Rdata", EXPO_IDs = exposure_IDs, OUTC_ID = outcome_ID),
+        expand(path_to_results + "013_MR_II_Expo_{EXPO_IDs}_Outc_{OUTC_ID}_interact_{INT_IDs}.Rdata", EXPO_IDs = exposure_IDs, OUTC_ID = outcome_ID, INT_IDs = interaction_IDs),
+        path_to_results + "014_causal_corrected_interaction.Rdata",
+        expand(path_to_results + "015_Model_PRS_on_pheno_{EXPO_IDs}.Rdata", EXPO_IDs = exposure_IDs),
+        expand(path_to_results + "016_MR_I_PRS_Expo_{EXPO_IDs}_Outc_{OUTC_ID}.Rdata", EXPO_IDs = exposure_IDs, OUTC_ID = outcome_ID),
+        expand(path_to_results + "017_MR_II_PRS_Expo_{EXPO_IDs}_Outc_{OUTC_ID}_interact_{INT_IDs}.Rdata", EXPO_IDs = exposure_IDs, OUTC_ID = outcome_ID, INT_IDs = interaction_IDs),
+        path_to_results + "018_PRS_corrected_interaction.Rdata",
+        path_to_results + "019_df_interactions.Rdata"
+
+# rule preprocess_for_PLINK:# script 0
+#     input:
+#         expo = path_to_neale_files + "{exposure_IDs}.gwas.imputed_v3.both_sexes.tsv.gz"
+#     params:
+#         variant_df = variant_df,
+#         file_snp_reference  = file_snp_reference
+#     output:
+#         raw = path_to_results + "000_Raw_{exposure_IDs}.txt"
+#     resources:
+#         mem_mb = 80000,
+#         time = 30
+#     script:
+#         "scripts/000_Preprocess_for_PLINK.R"
+
+# rule pruning_in_PLINK_lenient:# no script (lenient threshold to investigate snp*E interactions)
+#     input:
+#         gwas = path_to_results + "000_Raw_{exposure_IDs}.txt"
+#     params:
+#         clump_p1 = 0.00005,
+#         clump_r2 = 0.01,
+#         clump_kb = 250,
+#         bfile = bfile,
+#         exposure_traits_clumped = path_to_results + "Clumping_p5e5_{exposure_IDs}"
+#     output:
+#         clumped = path_to_results + "Clumping_p5e5_{exposure_IDs}.clumped",
+#         log = path_to_results + "Clumping_p5e5_{exposure_IDs}.log",
+#         nosex = path_to_results + "Clumping_p5e5_{exposure_IDs}.nosex"
+#     resources:
+#         mem_mb = 24000,
+#         time = 20
+#     shell:
+#         "plink --bfile {params.bfile} --clump {input.gwas} --clump-p1 {params.clump_p1} --clump-r2 {params.clump_r2} --clump-kb {params.clump_kb} --out {params.exposure_traits_clumped}"
+
+# rule pruning_in_PLINK:# no script (genome wide significant threshold for GRS calculation)
+#     input:
+#         gwas = path_to_results + "000_Raw_{exposure_IDs}.txt"
+#     params:
+#         clump_p1 = 5e-8,
+#         clump_r2 = 0.01,
+#         clump_kb = 250,
+#         bfile = bfile,
+#         exposure_traits_clumped = path_to_results + "Clumping_{exposure_IDs}"
+#     output:
+#         clumped = path_to_results + "Clumping_{exposure_IDs}.clumped",
+#         log = path_to_results + "Clumping_{exposure_IDs}.log",
+#         nosex = path_to_results + "Clumping_{exposure_IDs}.nosex"
+#     resources:
+#         mem_mb = 24000,
+#         time = 20
+#     shell:
+#         "plink --bfile {params.bfile} --clump {input.gwas} --clump-p1 {params.clump_p1} --clump-r2 {params.clump_r2} --clump-kb {params.clump_kb} --out {params.exposure_traits_clumped}"
+
+
+# rule filter_sample:# script 1
+#     input:
+#         file_sample_qc = file_sample_qc,
+#         file_eids = file_eids,
+#         file_retracted_samples = file_retracted_samples
+#     output:
+#         active_samples = path_to_results + "001_samples_white_british_all.txt"
+#     resources:
+#         mem_mb = 2000,
+#         time = 5
+#     script:
+#         "scripts/001_Sample_filtering.R"
+
+# rule extract_SNPs:# script 2
+#     input:
+#         files_bgen = expand(path_to_bgen_files + "_001_ukb_imp_chr{NUM_CHR}_v2.bgen", NUM_CHR = range(1,23)), #pythons annoying range function!!
+#         file_snps = path_to_results + "Clumping_p5e5_{exposure_IDs}.clumped",
+#         file_wb_participants = file_wb_participants
+#     params:
+#         file_sample_order = path_to_bgen_files + "ukb1638_imp_chr1_v2_s487398.sample",
+#     output:
+#         genetics_list = path_to_results + "002_Genotypes_{exposure_IDs}.Rdata"
+#     resources:
+#         mem_mb = 120000,
+#         time = 60
+#     script:
+#         "scripts/002_Extract_SNPs.R"
+
+# rule get_covariates:# script 3
+#     input:
+#         file_demographics = file_demographics
+#     params:
+#         file_wb_participants = file_wb_participants,
+#         file_eids = file_eids,
+#         file_qc = file_sample_qc,
+#         path_ukbb_files = path_ukbb_files
+#     output:
+#         file_covariates = path_to_results + "003_Covariates.Rdata",
+#         file_medication = path_to_results + "003_Medication.Rdata"
+#     resources:
+#         mem_mb = 4000,
+#         time = 10
+#     script:
+#         "scripts/003_Get_covariates.R"
+
+# rule get_exposure_phenotypes:# script 4
+#     input:
+#         file_demographics = file_demographics,
+#         file_covariates = path_to_results + "003_Covariates.Rdata"
+#     params:
+#         exposure_IDs = "{exposure_IDs}",
+#         file_wb_participants = file_wb_participants,
+#         file_eids = file_eids,
+#         remove_negative_code = remove_negative_code,
+#         path_ukbb_files = path_ukbb_files
+#     output:
+#         file_phenotypes = path_to_results + "004_Exposure_phenotype_{exposure_IDs}.Rdata"
+#     resources:
+#         mem_mb = 2000,
+#         time = 10
+#     script:
+#         "scripts/004_Get_exposure_phenotypes.R"
+
+# rule get_outcome_phenotype:# script 5
+#     input:
+#         file_demographics = file_demographics,
+#         file_covariates = path_to_results + "003_Covariates.Rdata"
+#     params:
+#         outcome_ID = "{outcome_ID}",
+#         file_wb_participants = file_wb_participants,
+#         file_eids = file_eids
+#     output:
+#         file_outcome_phenotype = path_to_results + "005_outcome_phenotype_{outcome_ID}.Rdata"
+#     resources:
+#         mem_mb = 2000,
+#         time = 10
+#     script:
+#         "scripts/005_Get_outcome_phenotype.R"
+
+# rule extract_interaction_phenotypes: # script 6
+#     input:
+#         file_covariates = path_to_results + "003_Covariates.Rdata"
+#     params:
+#         interaction_ID = "{interaction_IDs}",
+#         file_wb_participants = file_wb_participants,
+#         file_eids = file_eids
+#     output:
+#         file_interaction_phenotype = path_to_results + "006_interaction_phenotype_{interaction_IDs}.Rdata"
+#     resources:
+#         mem_mb = 2000,
+#         time = 10
+#     script:
+#         "scripts/006_Get_interaction_phenotype.R"
+
+rule fit_e_on_x_models: # script 7
+    input:
+        file_covariates = path_to_results + "003_Covariates.Rdata",
+        file_medication = path_to_results + "003_Medication.Rdata",
+        file_exposure_phenotypes = path_to_results + "004_Exposure_phenotype_{exposure_IDs}.Rdata",
+        file_interaction_phenotype = path_to_results + "006_interaction_phenotype_{interaction_IDs}.Rdata"
+    params:
+        interaction_ID = "{interaction_IDs}",
+        exposure_IDs = "{exposure_IDs}",
+        correct_for_insulin = correct_for_insulin,
+        correct_for_bp_medication = correct_for_bp_medication,
+        correct_for_oral_contraceptive = correct_for_oral_contraceptive,
+        correct_for_cholesterol_lowering = correct_for_cholesterol_lowering,
+        correct_for_hormone_replacement = correct_for_hormone_replacement
+    output:
+        model_E_on_X = path_to_results + "007_E_{interaction_IDs}_X_{exposure_IDs}_model.Rdata"
+    resources:
+        mem_mb = 2000,
+        time = 10
+    script:
+        "scripts/007_Fit_E_on_X_models.R"
+
+# rule get_SNPxE_on_X_interaction: #script 9
+#     input:
+#         file_exposure_phenotypes = path_to_results + "004_Exposure_phenotype_{exposure_IDs}.Rdata",
+#         file_genotypes = path_to_results + "002_Genotypes_{exposure_IDs}.Rdata",
+#         file_covariates = path_to_results + "003_Covariates.Rdata",
+#         file_raw_effects = path_to_results + "000_Raw_{exposure_IDs}.txt",
+#         file_interaction_phenotype = path_to_results + "006_interaction_phenotype_{interaction_IDs}.Rdata"
+#     params:
+#         exposure_IDs = "{exposure_IDs}",
+#         comparison_plot_SNP_effect_neale_no_outliers = path_to_results + "plots/009_Comparison_Neale_no_outliers_{exposure_IDs}.pdf",
+#         interaction_ID = "{interaction_IDs}"
+#     output:
+#         snp_E_interactions = path_to_results + "009_SNP_x_{interaction_IDs}_interactions_on_{exposure_IDs}.Rdata",
+#         qq_plot_SNP_x_E_effects = path_to_results + "plots/009_qq_SNP_x_{interaction_IDs}_effect_on_{exposure_IDs}.png",
+#         qq_plot_SNP_x_E2_effects = path_to_results + "plots/009_qq_SNP_x_{interaction_IDs}_2_effect_on_{exposure_IDs}.png"
+#     resources:
+#         mem_mb = 128000,
+#         time = 120
+#     script:
+#         "scripts/009_Get_SNPxE_interaction.R"
+
+# rule calculate_GRS:# script 10
+#     input:
+#         file_snp_effects = path_to_results + "000_Raw_{exposure_IDs}.txt",
+#         file_genotypes = path_to_results + "002_Genotypes_{exposure_IDs}.Rdata",
+#         file_phenotypes = path_to_results + "004_Exposure_phenotype_{exposure_IDs}.Rdata",
+#         file_covariates = path_to_results + "003_Covariates.Rdata",
+#         file_medication = path_to_results + "003_Medication.Rdata",
+#         clumped_snps = path_to_results + "Clumping_{exposure_IDs}.clumped"
+#     params:
+#         exposure_IDs = "{exposure_IDs}",
+#         path_to_results = path_to_results,
+#         correct_for_insulin = correct_for_insulin,
+#         correct_for_bp_medication = correct_for_bp_medication,
+#         correct_for_oral_contraceptive = correct_for_oral_contraceptive,
+#         correct_for_cholesterol_lowering = correct_for_cholesterol_lowering,
+#         correct_for_hormone_replacement = correct_for_hormone_replacement,
+#         female_only_IDs = female_only_IDs
+#     output:
+#         file_GRS = path_to_results + "010_individual_GRS_{exposure_IDs}.Rdata",
+#         file_GRS_on_pheno_model = path_to_results + "010_Model_GRS_on_pheno_{exposure_IDs}.Rdata",
+#         file_minimal_GRS_on_pheno_model = path_to_results + "010_Minimal_Model_GRS_on_pheno_{exposure_IDs}.Rdata"
+#     resources:
+#         mem_mb = 64000,
+#         time = 45
+#     script:
+#         "scripts/010_Calculate_GRS.R"
+
+rule get_GRSxE_on_X: # script 11
+    input:
+        file_exposure_phenotypes = path_to_results + "004_Exposure_phenotype_{exposure_IDs}.Rdata",
+        file_interaction_phenotype = path_to_results + "006_interaction_phenotype_{interaction_IDs}.Rdata",
+        file_GRS = path_to_results + "010_individual_GRS_{exposure_IDs}.Rdata"
+    params:
+        exposure_IDs = "{exposure_IDs}",
+        interaction_ID = "{interaction_IDs}"
+    output:
+        file_GRSxE_on_pheno_model = path_to_results + "011_Model_GRSxE_{interaction_IDs}_on_X_{exposure_IDs}.Rdata"
+    resources:
+        mem_mb = 2000,
+        time = 10
+    script:
+        "scripts/011_Get_GRSxE_on_X.R"
+
+
+rule fit_MR_1:# script 12
+    input:
+        file_phenotypes = path_to_results + "004_Exposure_phenotype_{exposure_IDs}.Rdata",
+        file_GRS = path_to_results + "010_individual_GRS_{exposure_IDs}.Rdata",
+        file_outcome_phenotype = path_to_results + "005_outcome_phenotype_{outcome_ID}.Rdata",
+        file_medication = path_to_results + "003_Medication.Rdata"
+    params:
+        exposure_IDs = "{exposure_IDs}",
+        outcome_column = "{outcome_ID}_z_c",
+        exposure_GRS_column = "GRS_{exposure_IDs}",
+        correct_for_insulin = correct_for_insulin,
+        correct_for_bp_medication = correct_for_bp_medication,
+        correct_for_oral_contraceptive = correct_for_oral_contraceptive,
+        correct_for_cholesterol_lowering = correct_for_cholesterol_lowering,
+        correct_for_hormone_replacement = correct_for_hormone_replacement
+    output:
+        mr_models = path_to_results + "012_MR_I_Expo_{exposure_IDs}_Outc_{outcome_ID}.Rdata"
+    resources:
+        mem_mb = 2000,
+        time = 10
+    script:
+        "scripts/012_Fit_minimal_MR.R"
+
+rule fit_MR_interactions:# script 13
+    input:
+        file_GRS = path_to_results + "010_individual_GRS_{exposure_IDs}.Rdata",
+        file_outcome_phenotype = path_to_results + "005_outcome_phenotype_{outcome_ID}.Rdata",
+        file_interaction_phenotype = path_to_results + "006_interaction_phenotype_{interaction_IDs}.Rdata",
+        file_medication = path_to_results + "003_Medication.Rdata"
+    params:
+        exposure_IDs = "{exposure_IDs}",
+        interaction_ID = "{interaction_IDs}",
+        outcome_column = "{outcome_ID}_z_c",
+        exposure_GRS_column = "GRS_{exposure_IDs}",
+        correct_for_insulin = correct_for_insulin,
+        correct_for_bp_medication = correct_for_bp_medication,
+        correct_for_oral_contraceptive = correct_for_oral_contraceptive,
+        correct_for_cholesterol_lowering = correct_for_cholesterol_lowering,
+        correct_for_hormone_replacement = correct_for_hormone_replacement
+    output:
+        mr_models = path_to_results + "013_MR_II_Expo_{exposure_IDs}_Outc_{outcome_ID}_interact_{interaction_IDs}.Rdata"
+    resources:
+        mem_mb = 2000,
+        time = 10
+    script:
+        "scripts/013_Fit_MR_interactions.R"
+
+rule get_all_causal_and_corrected_estimates: #script 14
+    input:
+        # df to translate expo IDs to traits 
+        # with columns X_ID (trait IDs) and X_trait (intended trait labels)
+        df_ids = path_to_data + "expo_overview.csv",
+        # df o translate envir IDs to traits
+        # with columns E (trait IDs) and E_trait (intended label for interaction traits)
+        interaction_overview = path_to_data + "interaction_overview.csv", 
+        # df with columns Y (outcome trait IDs) and Y_trait (intended label for outcome traits)
+        outcome_overview = path_to_data + "outcome_overview.csv", 
+        MR_1_files = expand(path_to_results + "012_MR_I_Expo_{EXPO_IDs}_Outc_{OUTC_ID}.Rdata", EXPO_IDs = exposure_IDs, OUTC_ID = outcome_ID),
+        MR_2_files = expand(path_to_results + "013_MR_II_Expo_{EXPO_IDs}_Outc_{OUTC_ID}_interact_{INT_IDs}.Rdata", EXPO_IDs = exposure_IDs, OUTC_ID = outcome_ID, INT_IDs = interaction_IDs)
+    params:
+        path_to_results = path_to_results,
+        outcome_phenotype = "_z_c"
+    output:
+        file_causal_main_effects = path_to_results + "014_causal_main_effects.Rdata",
+        file_causal_quadratic_effects = path_to_results + "014_causal_quadratic_effects.Rdata",
+        file_causal_interaction_effects = path_to_results + "014_causal_corrected_interaction.Rdata"
+    resources:
+        mem_mb = 64000,
+        time = 10
+    script:
+        "scripts/014_Causal_effect_estimates_GRS.R"
+
+rule get_PRS_on_X_effect: # script 15
+    input:
+        file_PRS_overview = path_to_data + "expo_overview.csv",
+        file_PRS = file_PRS,
+        file_exposure_phenotype = path_to_results + "004_Exposure_phenotype_{exposure_IDs}.Rdata",
+        file_medication = path_to_results + "003_Medication.Rdata",
+        file_covariates = path_to_results + "003_Covariates.Rdata"
+    params:
+        exposure_IDs = "{exposure_IDs}",
+        correct_for_insulin = correct_for_insulin,
+        correct_for_bp_medication = correct_for_bp_medication,
+        correct_for_oral_contraceptive = correct_for_oral_contraceptive,
+        correct_for_cholesterol_lowering = correct_for_cholesterol_lowering,
+        correct_for_hormone_replacement = correct_for_hormone_replacement
+    output:
+        file_PRS_on_pheno_model = path_to_results + "015_Model_PRS_on_pheno_{exposure_IDs}.Rdata",
+        file_minimal_PRS_on_pheno_model = path_to_results + "015_Minimal_Model_PRS_on_pheno_{exposure_IDs}.Rdata"
+    resources:
+        mem_mb = 2000,
+        time = 5
+    script:
+        "scripts/015_PRS_on_X.R"
+
+rule fit_MR_PRS:# script 16
+    input:
+        file_PRS_overview = path_to_data + "expo_overview.csv",
+        file_PRS = file_PRS,
+        file_outcome_phenotype = path_to_results + "005_outcome_phenotype_{outcome_ID}.Rdata",
+        file_medication = path_to_results + "003_Medication.Rdata"
+    params:
+        exposure_IDs = "{exposure_IDs}",
+        outcome_column = "{outcome_ID}_z_c",
+        correct_for_insulin = correct_for_insulin,
+        correct_for_bp_medication = correct_for_bp_medication,
+        correct_for_oral_contraceptive = correct_for_oral_contraceptive,
+        correct_for_cholesterol_lowering = correct_for_cholesterol_lowering,
+        correct_for_hormone_replacement = correct_for_hormone_replacement
+    output:
+        mr_models_PRS = path_to_results + "016_MR_I_PRS_Expo_{exposure_IDs}_Outc_{outcome_ID}.Rdata"
+    resources:
+        mem_mb = 2000,
+        time = 10
+    script:
+        "scripts/016_MR_minimal_PRS.R"
+
+rule fit_MR_interactions_PRS:# script 17
+    input:
+        file_PRS_overview = path_to_data + "expo_overview.csv",
+        file_PRS = file_PRS,
+        file_outcome_phenotype = path_to_results + "005_outcome_phenotype_{outcome_ID}.Rdata",
+        file_interaction_phenotype = path_to_results + "006_interaction_phenotype_{interaction_IDs}.Rdata",
+        file_medication = path_to_results + "003_Medication.Rdata"
+    params:
+        exposure_IDs = "{exposure_IDs}",
+        interaction_ID = "{interaction_IDs}",
+        outcome_column = "{outcome_ID}_z_c",
+        correct_for_insulin = correct_for_insulin,
+        correct_for_bp_medication = correct_for_bp_medication,
+        correct_for_oral_contraceptive = correct_for_oral_contraceptive,
+        correct_for_cholesterol_lowering = correct_for_cholesterol_lowering,
+        correct_for_hormone_replacement = correct_for_hormone_replacement
+    output:
+        mr_models = path_to_results + "017_MR_II_PRS_Expo_{exposure_IDs}_Outc_{outcome_ID}_interact_{interaction_IDs}.Rdata"
+    resources:
+        mem_mb = 4000,
+        time = 20
+    script:
+        "scripts/017_MR_interactions_PRS.R"
+
+rule correct_interactions_PRS:#script 18
+    input:
+        # df to translate expo IDs to traits 
+        # with columns X_ID (trait IDs) and X_trait (intended trait labels)
+        df_ids = path_to_data + "expo_overview.csv",
+        # df o translate envir IDs to traits
+        # with columns E (trait IDs) and E_trait (intended label for interaction traits)
+        interaction_overview = path_to_data + "interaction_overview.csv", 
+        # df with columns Y (outcome trait IDs) and Y_trait (intended label for outcome traits)
+        outcome_overview = path_to_data + "outcome_overview.csv", 
+        MR_1_files = expand(path_to_results + "016_MR_I_PRS_Expo_{EXPO_IDs}_Outc_{OUTC_ID}.Rdata", EXPO_IDs = exposure_IDs, OUTC_ID = outcome_ID),
+        MR_2_files = expand(path_to_results + "017_MR_II_PRS_Expo_{EXPO_IDs}_Outc_{OUTC_ID}_interact_{INT_IDs}.Rdata", EXPO_IDs = exposure_IDs, OUTC_ID = outcome_ID, INT_IDs = interaction_IDs)
+    params:
+        path_to_results = path_to_results,
+        outcome_phenotype = "_z_c"
+    output:
+        file_PRS_main_effects = path_to_results + "018_PRS_main_effects.Rdata",
+        file_PRS_quadratic_effects = path_to_results + "018_PRS_quadratic_effects.Rdata",
+        file_PRS_interaction_effects = path_to_results + "018_PRS_corrected_interaction.Rdata"
+    resources:
+        mem_mb = 64000,
+        time = 20
+    script:
+        "scripts/018_PRS_Interaction_correction.R"
+
+rule postprocessing_interactions: # script 19
+    input:
+        file_quadratic_GRS = path_to_results + "014_causal_quadratic_effects.Rdata",
+        file_interaction_GRS = path_to_results + "014_causal_corrected_interaction.Rdata",
+        file_interaction_PRS = path_to_results + "018_PRS_corrected_interaction.Rdata"
+    resources:
+        mem_mb = 2000,
+        time = 5
+    output:
+        df_interaction = path_to_results + "019_df_interactions.Rdata"
+    script:
+        "scripts/019_Interaction_summary.R"
