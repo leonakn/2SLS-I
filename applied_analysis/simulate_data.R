@@ -1,7 +1,7 @@
 # simulate data for example workflow
 
 set.seed(1505)
-setwd("/Users/lknusel/Documents/05_strati_polyMR/08_public_github/2SLS-I/applied_analysis/data/")
+setwd("data/")
 # assume X_ID = 37, Y_ID = 11, and E_ID = 1204
 n_sample <- 100000
 b_G_X <- 0.2
