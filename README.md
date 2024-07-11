@@ -17,5 +17,5 @@ Scripts to replicate the simulation analysis are provided in the folder "R/simul
 
 # Application
 Please note that the full pipeline is provided, even though it is likely that some of the preprocessing steps for the phenotypes will require adequate attention depending on the structure of the cluster that is used.
-To account for this, simulated data is provided to run the second half of the analysis, assuming the data has been prepared accordingly. Thus, all elements that would require access to the UKBB to run have been commented out. The working example takes less than 10 minutes to run.
+To account for this, simulated data is provided to run the second half of the analysis, assuming the data has been prepared accordingly. Thus, all elements that would require access to the UKBB to run have been commented out. The working example takes less than 10 minutes to run (time and resources allocated in the Snakefile are generous).
 
